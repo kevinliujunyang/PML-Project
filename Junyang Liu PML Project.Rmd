@@ -1,0 +1,197 @@
+---
+title: "Practical Machine Learing Project"
+author: "Junyang Liu"
+date: "12/4/2016"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Project Introduction
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## Data
+
+The training data for this project are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+## Goal
+
+The goal of your project is to predict the manner in which they did the exercise. This is the “classe” variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases.
+
+## Getting and Cleaning Data
+
+Here are the packages needed for this project
+```{r}
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(randomForest)
+```
+Load Data from URL
+```{r}
+trainUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+training <- read.csv(url(trainUrl), na.strings=c("NA","#DIV/0!",""))
+testing <- read.csv(url(testUrl), na.strings=c("NA","#DIV/0!",""))
+
+```
+
+### Partition
+
+```{r}
+Train <- createDataPartition(training$classe, p=0.6, list=FALSE)
+myTrain <- training[Train, ]
+myTest <- training[-Train, ]
+```
+
+Here are the dimentions of the training set after partition
+```{r}
+dim(myTrain); dim(myTest)
+```
+
+### Cleaning data
+
+I used a `nearZeroVar` Function to get rid of the columns that has very low variance or has no variance. If the predictors have very low variance or have no variance, this predictor is not going to be very useful in prediction. 
+```{r}
+nzv <- nearZeroVar(myTrain, saveMetrics=TRUE)
+myTrain <- myTrain[,nzv$nzv==FALSE]
+
+nzv<- nearZeroVar(myTest,saveMetrics=TRUE)
+myTest <- myTest[,nzv$nzv==FALSE]
+```
+
+ALso, I dropped the first column `X`, which is just a reference key of this data set.it not useful in our analysis and prediction.
+```{r}
+myTrain <- myTrain[c(-1)]
+```
+
+now we need to clear our all the variables that has at least 70% of the data showing as `NA`.
+we also need to drop `classe` in our real test set. because that is the column we are tring to predict. 
+```{r}
+keep<-which(apply(is.na(myTrain[,1:ncol(myTrain)]),2,sum)/nrow(myTrain) <= 0.7)
+
+myTrain<- myTrain[,names(keep)]
+myTest<- myTest[,names(keep)]
+testing <- testing[names(keep)[-58]]
+```
+
+Check data dimentions to make sure we did it right
+
+```{r}
+dim(myTest)
+dim(testing)
+```
+
+Convert the class of test data into the same class as training data
+```{r}
+
+for (i in 1:length(testing) ) {
+        for(j in 1:length(myTrain)) {
+        if( length( grep(names(myTrain[i]), names(testing)[j]))==1){
+            class(testing[j]) <- class(myTrain[i])
+        }      
+    }      
+}
+```
+Verify our tranformation is working
+```{r}
+testing <- rbind(myTrain[2, -58] , testing)
+testing <- testing[-1,]
+```
+
+## Prediction using Decision Tree
+
+Fit decision tree model
+```{r}
+fit1 <- rpart(classe ~ ., data=myTrain, method="class")
+fancyRpartPlot(fit1)
+```
+
+Applying Fit model to prediction
+```{r}
+prediction1 <- predict(fit1, myTest, type = "class")
+result1 <- confusionMatrix(prediction1, myTest$classe)
+result1
+```
+
+## Prediction using Random Forest
+
+Fit Random Forest model
+```{r}
+fit2 <- randomForest(classe ~ ., data=myTrain)
+```
+
+Applying Fit model to prediction
+```{r}
+prediction2 <- predict(fit2, myTest, type = "class")
+result2 <- confusionMatrix(prediction2, myTest$classe)
+result2
+```
+
+Graph of random forest fit
+```{r}
+plot(fit2)
+```
+
+### Prediction using Generalized Boosting
+
+Fit Generalized Boosting  model
+```{r}
+tControl <- trainControl(method = "repeatedcv",number = 5,repeats = 1)
+fit3raw <- train(classe ~ ., data=myTrain, method = "gbm",trControl = tControl,verbose = FALSE)
+fit3<- fit3raw$finalModel
+```
+
+Applying Fit model to prediction
+
+```{r}
+predition3 <- predict(fit3raw, newdata=myTest)
+accuracy <- confusionMatrix(predition3, myTest$classe)
+accuracy
+```
+
+Graph of Generalized Boosting
+
+```{r}
+plot(fit3raw)
+```
+
+From above modeling fitting and prediction using our training data, we have found that random forest will provide the best prediction (have highest accuracy). Therefore, we will choose random forest as our predicting method for real test set
+
+## Predict on the real test set
+
+```{r}
+prediction_real <- predict(fit2, testing, type = "class")
+prediction_real
+```
+
+## Submission
+Results to a text file for submission
+```{r}
+pml_write_files = function(x){
+    n = length(x)
+    for(i in 1:n){
+        filename = paste0("problem_id_",i,".txt")
+        write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+    }
+}
+pml_write_files(prediction_real)
+```
+
+
+
+
+
+
+
+
